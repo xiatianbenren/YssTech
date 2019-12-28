@@ -35,6 +35,13 @@
       <version>1.8.1</version>
     </dependency>
 
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <version>1.16.18</version>
+      <scope>provided</scope>
+    </dependency>
+
     <!--提供给springmvc进行对象-json数据转换的api-->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>

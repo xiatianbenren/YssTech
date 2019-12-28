@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.xak.dao.EmpDao">
+
+    <insert id="add">
+        insert into emp values(12,#{empName},'sit',#{salary})
+    </insert>
+
+</mapper>

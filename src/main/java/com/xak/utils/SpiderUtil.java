@@ -11,6 +11,8 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 
+import static java.lang.System.currentTimeMillis;
+
 /**
  * Jsoup标签匹配规则和jQuery基本一致
  * class属性用"."，id属性用"#",标签名直接写名字，获取标签属性用Element.attr("属性名")
@@ -21,37 +23,77 @@ import java.io.IOException;
  * date: 2019/4/3.
  */
 public class SpiderUtil {
+
 //TODO:断点续写，offset设计
 //TODO:任务写入结束后续操作，如：写入完成后更改File parent文件夹名字为书名并压缩，若压缩包大小过大放入其他路径
+//TODO：线程模型优化，读写分离（读操作优先，读取到buffer存储，达到阈值时停止读，写操作异步执行，小于阈值时继续读，基于offset）
+
     private static String path="D:\\ChromeDownload\\spider1\\mySpiderResult.txt";
-    private static String spideUrl="https://www.bequge.com/30_30046/";
+    /*private static String spideUrl="https://www.bequge.com/30_30046/";*/
+    //jiuxingbatijue
+    private static String spideUrl="https://www.xbiquge6.com/75_75933/";
+    private static String baseUrl="https://www.bequge.com";
     private static File file=new File(path);
     private static int WriteCounter=0;
     private static int fileSequence=0;
-    private static int fileParentSequence=0;
     private static int getDocCount=0;
 
     public static void main(String[] args){
-
         try {
+            long start = currentTimeMillis();
             spiderNovella();
-            System.out.println("本次任务执行完毕~~~");
-
-
+            long end=System.currentTimeMillis();
+            System.out.println("本次任务执行完毕,共耗时 "+(end-start)/1000+"秒");
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    /*private static Connection getConn(String url,int timeout){
-        Connection con=null;
-        try {
-            con=Jsoup.connect(url).timeout(timeout);
-        }catch (Exception e){
-            getConn(url,timeout);
+    /**
+     * 从笔趣阁爬取数据
+     * www.bequge.com
+     * @throws IOException
+     */
+    private static void spiderNovella() throws IOException {
+        //增大网络超时时间，减小网络波动的影响
+        Connection con=Jsoup.connect(spideUrl).timeout(100000);
+        //递归获取doc，防止读取超时
+        Document document = getDoc(con);
+        Elements dds = document.getElementById("list").select("dl").select("dd");
+        //校验文件路径是否存在
+        checkFileParent();
+       lable: for (Element dd: dds){
+            //章节url（相对路径）
+            String chapterUrl=dd.select("a").attr("href");
+            String chapterName=dd.select("a").text();
+            System.out.println(dd.select("a").text());
+
+            //拼接绝对路径
+            chapterUrl=baseUrl+chapterUrl;
+            Connection connect = Jsoup.connect(chapterUrl);
+            Document contentDoc = getDoc(connect);
+
+            /*core:fetch the txt content
+           部分章节爬取被破坏，跳过*/
+           String content="";
+           try {
+                content=fetchContent(contentDoc);
+           }catch (NullPointerException e){
+               String msg="此章节有反爬虫设置。。。";
+               write2MyFile(msg);
+               System.out.println(chapterName+"!!"+msg);
+                continue lable;
+           }
+           if(content.equals("")){
+               throw new RuntimeException("The content fetch processing failed,please check agin!!");
+           }
+
+
+            //每次写校验文件是否存在，大小是否超标
+            write2MyFile(chapterName);
+            write2MyFile(content);
         }
-        return con;
-    }*/
+    }
 
     private static Document getDoc(Connection con){
         Document doc=null;
@@ -60,6 +102,9 @@ public class SpiderUtil {
             System.out.println("第"+WriteCounter+"次写入,"+"第"+getDocCount+"次获取doc。。。");
             doc=con.get();
         } catch (Exception e) {
+            if (getDocCount>5){
+                throw new RuntimeException("获取Doc次数已达上限，获取失败");
+            }
             getDoc(con);
         }
         //获取成功，重置0
@@ -68,68 +113,27 @@ public class SpiderUtil {
     }
 
     /**
-     * 从笔趣阁爬取数据
-     * www.bequge.com
-     *
-     * @throws IOException
+     * 校验父文件夹
+     * 一次任务校验一次即可
      */
-    private static void spiderNovella() throws IOException {
-        //String url="https://www.bequge.com/30_30046/";
-        //增大网络超时时间，减小网络波动的影响
-        Connection con=Jsoup.connect(spideUrl).timeout(100000);
-        //递归获取doc，防止读取超时
-        Document document = getDoc(con);
-        Element ele = document.getElementById("list");
-        Elements dds = ele.select("dl").select("dd");
-
-        //校验文件路径是否存在
-        checkFileParent();
-
-        for (Element dd: dds){
-            //章节url（相对路径）
-            String chapterUrl=dd.select("a").attr("href");
-            String chapterName=dd.select("a").text();
-            System.out.println(dd.select("a").text());
-
-            //爬取每一章正文
-
-            //拼接绝对路径
-            chapterUrl="https://www.bequge.com"+chapterUrl;
-            Connection connect = Jsoup.connect(chapterUrl);
-            Document document1 = getDoc(connect);
-           /* Elements select = document.select("div").get(0).select(".content_read").select(".box_con").
-                    select(".bookname").
-                    select("h1");
-            String chpterName=select.text();*/
-            Elements contentEle = document.select("div").get(0).select(".content_read").select(".box_con").
-                    select("#content");
-            String content=contentEle.text();
-
-            //每次写校验文件是否存在，大小是否超标
-            write2MyFile(chapterName);
-            write2MyFile(content);
+    private static void checkFileParent(){
+        //文件夹不存在则创建
+        File fileParentDir=new File(file.getParent());
+        if (!fileParentDir.exists()){
+            //mkdirs()可以创建多级目录，父目录不一定存在。
+            fileParentDir.mkdirs();
         }
     }
 
-   /* private static void spideChapter(String chapterUrl){
-        //拼接绝对路径
-        chapterUrl="https://www.bequge.com"+chapterUrl;
-        Connection connect = Jsoup.connect(chapterUrl);
-        try {
-            Document document = connect.get();
-            Elements select = document.select("div").get(0).select(".content_read").select(".box_con").
-                    select(".bookname").
-                    select("h1");
-            String chpterName=select.text();
-            write2MyFile(chpterName);
-            Elements contentEle = document.select("div").get(0).select(".content_read").select(".box_con").
-                    select("#content");
-            String content=contentEle.text();
-            write2MyFile(content);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }*/
+    /**
+     * 正文部分标签匹配
+     * @param document
+     * @return
+     */
+    private static String fetchContent(Document document){
+        Elements contentEle = document.select("div").get(0).select(".content_read").select(".box_con").select("#content");
+        return contentEle.text();
+    }
 
     /**
      * 使用带缓冲区的输出流，将爬取的文本写入文件
@@ -182,19 +186,6 @@ public class SpiderUtil {
         if (file.length()>800*1024){
             file=new File(path.replace(".txt",fileSequence+".txt"));
             fileSequence++;
-        }
-    }
-
-    /**
-     * 校验父文件夹
-     * 一次任务校验一次即可
-     */
-    private static void checkFileParent(){
-        //文件夹不存在则创建
-        File fileParentDir=new File(file.getParent());
-        if (!fileParentDir.exists()){
-            //mkdirs()可以创建多级目录，父目录不一定存在。
-            fileParentDir.mkdirs();
         }
     }
 }
