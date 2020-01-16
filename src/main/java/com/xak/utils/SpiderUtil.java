@@ -24,79 +24,108 @@ import static java.lang.System.currentTimeMillis;
  */
 public class SpiderUtil {
 
-//TODO:断点续写，offset设计
-//TODO:任务写入结束后续操作，如：写入完成后更改File parent文件夹名字为书名并压缩，若压缩包大小过大放入其他路径
-//TODO：线程模型优化，读写分离（读操作优先，读取到buffer存储，达到阈值时停止读，写操作异步执行，小于阈值时继续读，基于offset）
-
-    private static String path="D:\\ChromeDownload\\spider1\\mySpiderResult.txt";
-    /*private static String spideUrl="https://www.bequge.com/30_30046/";*/
-    //jiuxingbatijue
-    private static String spideUrl="https://www.xbiquge6.com/75_75933/";
-    private static String baseUrl="https://www.bequge.com";
-    private static File file=new File(path);
-    private static int WriteCounter=0;
-    private static int fileSequence=0;
-    private static int getDocCount=0;
+    private static String savePath ="D:\\ChromeDownload\\spider\\mySpiderResult.txt";
+    private static String navURL ="75_75933/";
+    private static String website ="https://www.xsbiquge.com/";
+    public static File file=new File(savePath);
+    private static int WriteCounter=1,fileSequence=0,getDocCount=0;
+    private static final String ERR_FLAG="Error to skip";
+    private static final int MAX_FILE_SIZE=600*1024;
 
     public static void main(String[] args){
+        SpiderUtil instance=new SpiderUtil();
         try {
             long start = currentTimeMillis();
-            spiderNovella();
-            long end=System.currentTimeMillis();
+            instance.spiderNovella(website + navURL);
+            long end= currentTimeMillis();
             System.out.println("本次任务执行完毕,共耗时 "+(end-start)/1000+"秒");
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    /**
-     * 从笔趣阁爬取数据
-     * www.bequge.com
+    /**（模板方法模式：抽取每个网站不同的匹配步骤，交由子类实现）
+     * 1.章节导航页获取章节url
+     * 2.章节内容页抓取内容并写文件
+     * @param navUrl 章节导航页 url
      * @throws IOException
      */
-    private static void spiderNovella() throws IOException {
-        //增大网络超时时间，减小网络波动的影响
-        Connection con=Jsoup.connect(spideUrl).timeout(100000);
-        //递归获取doc，防止读取超时
-        Document document = getDoc(con);
-        Elements dds = document.getElementById("list").select("dl").select("dd");
-        //校验文件路径是否存在
-        checkFileParent();
-       lable: for (Element dd: dds){
-            //章节url（相对路径）
-            String chapterUrl=dd.select("a").attr("href");
-            String chapterName=dd.select("a").text();
+    void spiderNovella(String navUrl) throws IOException {
+        Connection con=Jsoup.connect(navUrl);
+        System.out.println("连接 导航【"+navUrl+"】成功！");
+        //Document document = getDoc(con);
+        Document document=con.get();
+        //Need to be overwite
+        Elements dds = this.getChapterElements(document);
+        if (dds.size()<=0){
+            throw new RuntimeException("当前导航页没有章节标签，爬虫解析结束！");
+        }
+        this.checkDirectory();
+        for (Element dd : dds) {
+            String relativeChapterURL = this.getChapterRelativeURL(dd);
+            String chapterName = dd.select("a").text();
             System.out.println(dd.select("a").text());
-
-            //拼接绝对路径
-            chapterUrl=baseUrl+chapterUrl;
-            Connection connect = Jsoup.connect(chapterUrl);
-            Document contentDoc = getDoc(connect);
-
-            /*core:fetch the txt content
-           部分章节爬取被破坏，跳过*/
-           String content="";
-           try {
-                content=fetchContent(contentDoc);
-           }catch (NullPointerException e){
-               String msg="此章节有反爬虫设置。。。";
-               write2MyFile(msg);
-               System.out.println(chapterName+"!!"+msg);
-                continue lable;
-           }
-           if(content.equals("")){
-               throw new RuntimeException("The content fetch processing failed,please check agin!!");
-           }
-
-
-            //每次写校验文件是否存在，大小是否超标
             write2MyFile(chapterName);
+            //拼接绝对路径=网站url+章节url
+            String absoluteURL=this.appendAbsoluteURL(navUrl,relativeChapterURL);
+            System.out.println(String.format("章节名：【%s】 - url: %s",chapterName,absoluteURL));
+
+            Connection connect = Jsoup.connect(absoluteURL);
+            Document contentDoc = connect.get();
+            String content=this.fetchContentFromChapterDoc(contentDoc);
+            if (ERR_FLAG.equals(content)) {
+                System.out.println("");
+                write2MyFile(content);
+                continue;
+            }
+            if (content.equals("")) {
+                throw new RuntimeException("The content fetch processing failed,please check agin!!");
+            }
             write2MyFile(content);
+            checkFile();
         }
     }
 
+    protected String appendAbsoluteURL(String navUrl, String relativeChapterURL) {
+        return navUrl + relativeChapterURL;
+    }
+
+    //重写此方法，定义获取章节elements规则
+    protected Elements getChapterElements(Document document){
+        Elements dds = document.getElementById("list").select("dl").select("dd");
+        return dds;
+    }
+
+    /**
+     * 从标签中解析章节url
+     * @param dd 章节标签
+     * @return
+     */
+    protected  String getChapterRelativeURL(Element dd){
+        //章节url（相对路径）
+        String relativeChapterURL = dd.select("a").attr("href");
+        return relativeChapterURL;
+    }
+
+    protected  String fetchContentFromChapterDoc(Document contentDoc){
+        String content = "";
+        try {
+            content=contentDoc.getElementById("content").text();
+        } catch (Exception e) {
+            content = ERR_FLAG;
+        }
+        return content;
+    }
+
+    @Deprecated
     private static Document getDoc(Connection con){
-        Document doc=null;
+        try {
+            return con.get();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return null;
+       /* Document doc=null;
         try {
             getDocCount++;
             System.out.println("第"+WriteCounter+"次写入,"+"第"+getDocCount+"次获取doc。。。");
@@ -108,20 +137,24 @@ public class SpiderUtil {
             getDoc(con);
         }
         //获取成功，重置0
+        System.out.println("第"+WriteCounter+"次写入获取doc成功！");
         getDocCount=0;
-        return doc;
+        return doc;*/
     }
 
     /**
      * 校验父文件夹
      * 一次任务校验一次即可
      */
-    private static void checkFileParent(){
+    private static void checkDirectory(){
         //文件夹不存在则创建
         File fileParentDir=new File(file.getParent());
         if (!fileParentDir.exists()){
             //mkdirs()可以创建多级目录，父目录不一定存在。
             fileParentDir.mkdirs();
+        }
+        if (file.exists()){
+            file.delete();
         }
     }
 
@@ -130,19 +163,16 @@ public class SpiderUtil {
      * @param document
      * @return
      */
-    private static String fetchContent(Document document){
-        Elements contentEle = document.select("div").get(0).select(".content_read").select(".box_con").select("#content");
+    private static String fetchContentElement(Document document){
+        Elements contentEle = document.select("div").get(0).select(".content_read")
+                .select(".box_con").select("#content");
         return contentEle.text();
     }
-
     /**
      * 使用带缓冲区的输出流，将爬取的文本写入文件
      * @param input wenben
      */
     private static void write2MyFile(String input){
-
-        checkFile();
-
         BufferedWriter bw=null;
         try {
             //new FileWriter(fileName,isAppend),true为追加写入文本
@@ -154,7 +184,6 @@ public class SpiderUtil {
             }
             bw.flush();
             WriteCounter++;
-            System.out.println("第"+WriteCounter+"次写入完成。。。");
 
         } catch (IOException e) {
             e.printStackTrace();
@@ -167,7 +196,6 @@ public class SpiderUtil {
             }
         }
     }
-
     /**
      * 文件大小校验
      * 每次写子任务之前校验，所以实际文件大小有可能超过800m
@@ -183,9 +211,12 @@ public class SpiderUtil {
         }
         //文件过大会对写入效率造成较大影响，所以定时切割文件
         //经测试，文件达到800M时速度下降明显
-        if (file.length()>800*1024){
-            file=new File(path.replace(".txt",fileSequence+".txt"));
+        if (file.length()>MAX_FILE_SIZE){
+            file=new File(savePath.replace(".txt",fileSequence+".txt"));
+            System.out.println(String.format("当前文件大小已满，创建新文件：%s",file.getName()));
             fileSequence++;
         }
     }
+
+
 }
